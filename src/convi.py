@@ -120,40 +120,6 @@ def create_model():
 
     return model
 
-#def model_fit(model):
-#    tbCallBack = TensorBoard(log_dir='./logtest2', histogram_freq=0,
-#            write_graph=True, write_images=True)
-#
-#    model.fit([calcium_train_padded, ids_oneshot], 
-#        spikes_train_padded, epochs=1,
-#        batch_size=5, validation_split=0.2, sample_weight=sample_weight,
-#        callbacks=[tbCallBack])
-#    model.save_weights('model_convi_6')
-#    return model
-#
-#
-#def model_test(model):
-#    #model.compile(loss=pearson_corr,optimizer='adam')
-#    #model.load_weights('model_convi_6')
-#    pred_train = model.predict([calcium_train_padded, ids_oneshot])
-#    pred_test = model.predict([calcium_test_padded, ids_oneshot_test])
-#
-#    for dataset in range(10):
-#        pd.DataFrame(pred_train[ids_stacked == dataset,
-#            :calcium_train[dataset].shape[0]].squeeze().T).\
-#            to_csv(dataloc + 'predict_6/' + str(dataset+1)+\
-#            '.train.spikes.csv', sep=',', index=False)
-#        if dataset < 5:
-#            pd.DataFrame(pred_test[ids_test_stacked == dataset,
-#                :calcium_test[dataset].shape[0]].squeeze().T).\
-#                to_csv(dataloc + 'predict_6/' + str(dataset+1)+\
-#                '.test.spikes.csv', sep=',', index=False)
-
-#def modelperf(y, ypred):
-#    j = roc_curve(y, ypred, 1)
-#    return np.corrcoef(y, ypred), np.sum(y==ypred)/len(y), \
-#        auc(j[0], j[1]), cohen_kappa_score(y, ypred)
-
 def plot_kernels(model, layer=0):
     srate = 100.
     weights = model.get_weights()[layer]
@@ -178,7 +144,7 @@ def fit_session(i):
         # remove nan
         LFP[np.isnan(LFP)] = 0.
         SPK[np.isnan(SPK)] = 0.
-        SPK[SPK > 1] = 1
+#        SPK[SPK > 1] = 1
         
         # cross-validation
         perf = np.zeros(cv)
