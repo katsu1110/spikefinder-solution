@@ -4,10 +4,13 @@
 #
 # requires numpy, pandas, matplotlib
 #
+# libraries ==========================================
+import platform
+import glob
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-
+from sklearn.metrics import roc_curve, auc, cohen_kappa_score
 from keras.models import Sequential, Model
 from keras.layers.wrappers import Bidirectional
 from keras.layers.core import Masking
@@ -19,9 +22,19 @@ from keras.callbacks import TensorBoard
 from keras import backend as K
 import tensorflow as tf
 
-dataloc = '../data/'
-dataloc = '/opt/spikefinder/data/'
+# datapath ===========================================
+if 'Win' in platform.system():
+    mypath = 'Z:'
+else:
+    mypath = '/gpfs01/nienborg/group'
+    
+l = glob.glob(mypath + '/Katsuhisa/serotonin_project/LFP_project/Data/c2s/data/*/')
 
+# other variables ===================================
+fnames = ['base', 'drug', 'highFR', 'lowFR']
+cv = 10
+
+# functions ==========================================
 def pearson_corr(y_true, y_pred, pool=True):
     """
         Calculates Pearson correlation as a metric.
@@ -67,69 +80,6 @@ def pool1d(x, length=4):
 
     return x * length
 
-
-def load_data(load_test=True):
-    calcium_train = []
-    spikes_train = []
-    ids = []
-    calcium_test = []
-    ids_test = []
-    for dataset in range(10):
-        calcium_train.append(np.array(pd.read_csv(dataloc + 
-            'spikefinder.train/' + str(dataset+1) + 
-            '.train.calcium.csv')))
-        spikes_train.append(np.array(pd.read_csv(dataloc + 
-            'spikefinder.train/' + str(dataset+1) + 
-            '.train.spikes.csv')))
-        ids.append(np.array([dataset]*calcium_train[-1].shape[1]))
-        if load_test and dataset < 5:
-            calcium_test.append(np.array(pd.read_csv(dataloc +
-                'spikefinder.test/' + str(dataset+1) +
-                '.test.calcium.csv')))
-            ids_test.append(np.array([dataset]*calcium_test[-1].shape[1]))
-
-    maxlen = max([c.shape[0] for c in calcium_train])
-    maxlen_test = max([c.shape[0] for c in calcium_test])
-    calcium_train_padded = \
-        np.hstack([np.pad(c, ((0, maxlen-c.shape[0]), (0, 0)),
-            'constant', constant_values=np.nan) for c in calcium_train])
-    spikes_train_padded = \
-        np.hstack([np.pad(c, ((0, maxlen-c.shape[0]), (0, 0)),
-            'constant', constant_values=np.nan) for c in spikes_train])
-    calcium_test_padded = \
-        np.hstack([np.pad(c, ((0, maxlen_test-c.shape[0]), (0, 0)),
-        'constant', constant_values=np.nan) for c in calcium_test])
-    ids_stacked = np.hstack(ids)
-    if load_test:
-        ids_test_stacked = np.hstack(ids_test)
-    else:
-        ids_test_stacked = []
-    sample_weight = 1. + 1.5*(ids_stacked<5)
-    sample_weight /= sample_weight.mean()
-    calcium_train_padded[spikes_train_padded<-1] = np.nan
-    spikes_train_padded[spikes_train_padded<-1] = np.nan
-
-    calcium_train_padded[np.isnan(calcium_train_padded)] = 0.
-    spikes_train_padded[np.isnan(spikes_train_padded)] = -1.
-
-    calcium_train_padded = calcium_train_padded.T[:, :, np.newaxis]
-    spikes_train_padded = spikes_train_padded.T[:, :, np.newaxis]
-    calcium_test_padded = calcium_test_padded.T[:, :, np.newaxis]
-
-    ids_oneshot = np.zeros((calcium_train_padded.shape[0],
-        calcium_train_padded.shape[1], 10))
-    ids_oneshot_test = np.zeros((calcium_test_padded.shape[0],
-        calcium_test_padded.shape[1], 10))
-    for n,i in enumerate(ids_stacked):
-        ids_oneshot[n, :, i] = 1.
-    for n,i in enumerate(ids_test_stacked):
-        ids_oneshot_test[n, :, i] = 1.
-
-    return calcium_train, calcium_train_padded, spikes_train_padded,\
-            calcium_test_padded, ids_oneshot, ids_oneshot_test,\
-            ids_stacked, ids_test_stacked, sample_weight
-            
-
 def create_model():
     '''
         Creates a multilayered convolutional network
@@ -137,20 +87,19 @@ def create_model():
 
     '''
     main_input = Input(shape=(None,1), name='main_input')
-    dataset_input = Input(shape=(None,10), name='dataset_input')
+#    dataset_input = Input(shape=(None,10), name='dataset_input')
     x = Conv1D(10, 300, padding='same', input_shape=(None,1))(main_input)
     x = Activation('tanh')(x)
     x = Dropout(0.3)(x)
     x = Conv1D(10, 10, padding='same')(x)
     x = Activation('relu')(x)
     x = Dropout(0.2)(x)
-    x = Concatenate()([x, dataset_input])
+#    x = Concatenate()([x, dataset_input])
     x = Conv1D(10, 5, padding='same')(x)
     x = Activation('relu')(x)
     x = Dropout(0.1)(x)
-
     z = Bidirectional(LSTM(10, return_sequences=True),
-                merge_mode='concat', weights=None)(x)
+                input_shape=(1, 1), weights=None)(x)
     x = Concatenate()([x, z])
 
     x = Conv1D(8, 5, padding='same')(x)
@@ -165,41 +114,45 @@ def create_model():
     x = Conv1D(1, 5, padding='same')(x)
     output = Activation('sigmoid')(x)
 
-    model = Model(inputs=[main_input, dataset_input], outputs=output)
+#    model = Model(inputs=[main_input, dataset_input], outputs=output)
+    model = Model(inputs=main_input, outputs=output)
     model.compile(loss=pearson_corr, optimizer='adam')
 
     return model
 
+#def model_fit(model):
+#    tbCallBack = TensorBoard(log_dir='./logtest2', histogram_freq=0,
+#            write_graph=True, write_images=True)
+#
+#    model.fit([calcium_train_padded, ids_oneshot], 
+#        spikes_train_padded, epochs=1,
+#        batch_size=5, validation_split=0.2, sample_weight=sample_weight,
+#        callbacks=[tbCallBack])
+#    model.save_weights('model_convi_6')
+#    return model
+#
+#
+#def model_test(model):
+#    #model.compile(loss=pearson_corr,optimizer='adam')
+#    #model.load_weights('model_convi_6')
+#    pred_train = model.predict([calcium_train_padded, ids_oneshot])
+#    pred_test = model.predict([calcium_test_padded, ids_oneshot_test])
+#
+#    for dataset in range(10):
+#        pd.DataFrame(pred_train[ids_stacked == dataset,
+#            :calcium_train[dataset].shape[0]].squeeze().T).\
+#            to_csv(dataloc + 'predict_6/' + str(dataset+1)+\
+#            '.train.spikes.csv', sep=',', index=False)
+#        if dataset < 5:
+#            pd.DataFrame(pred_test[ids_test_stacked == dataset,
+#                :calcium_test[dataset].shape[0]].squeeze().T).\
+#                to_csv(dataloc + 'predict_6/' + str(dataset+1)+\
+#                '.test.spikes.csv', sep=',', index=False)
 
-def model_fit(model):
-    tbCallBack = TensorBoard(log_dir='./logtest2', histogram_freq=0,
-            write_graph=True, write_images=True)
-
-    model.fit([calcium_train_padded, ids_oneshot], 
-        spikes_train_padded, epochs=1,
-        batch_size=5, validation_split=0.2, sample_weight=sample_weight,
-        callbacks=[tbCallBack])
-    model.save_weights('model_convi_6')
-    return model
-
-
-def model_test(model):
-    #model.compile(loss=pearson_corr,optimizer='adam')
-    #model.load_weights('model_convi_6')
-    pred_train = model.predict([calcium_train_padded, ids_oneshot])
-    pred_test = model.predict([calcium_test_padded, ids_oneshot_test])
-
-    for dataset in range(10):
-        pd.DataFrame(pred_train[ids_stacked == dataset,
-            :calcium_train[dataset].shape[0]].squeeze().T).\
-            to_csv(dataloc + 'predict_6/' + str(dataset+1)+\
-            '.train.spikes.csv', sep=',', index=False)
-        if dataset < 5:
-            pd.DataFrame(pred_test[ids_test_stacked == dataset,
-                :calcium_test[dataset].shape[0]].squeeze().T).\
-                to_csv(dataloc + 'predict_6/' + str(dataset+1)+\
-                '.test.spikes.csv', sep=',', index=False)
-
+#def modelperf(y, ypred):
+#    j = roc_curve(y, ypred, 1)
+#    return np.corrcoef(y, ypred), np.sum(y==ypred)/len(y), \
+#        auc(j[0], j[1]), cohen_kappa_score(y, ypred)
 
 def plot_kernels(model, layer=0):
     srate = 100.
@@ -213,15 +166,214 @@ def plot_kernels(model, layer=0):
     plt.ylabel('Kernel amplitudes')
     plt.title('Convolutional kernels of the input layer')
     plt.show()
+    
+def fit_session(i):
+    # go thorugh conditions
+    print('working on ' + l[i] + '...')
+    for c in range(4):
+        # load csv
+        LFP = np.array(pd.read_csv(l[i] + 'lfp_' + fnames[c] + '_cv10.csv'))
+        SPK = np.array(pd.read_csv(l[i] + 'spk_' + fnames[c] + '_cv10.csv'))
+        
+        # remove nan
+        LFP[np.isnan(LFP)] = 0.
+        SPK[np.isnan(SPK)] = 0.
+        SPK[SPK > 1] = 1
+        
+        # cross-validation
+        perf = np.zeros(cv)
+        for v in range(cv):
+            # split train and test
+            idx = [l for l in range(cv) if l != v]
+            X_train = np.reshape(LFP[:, idx], (np.size(LFP[:, idx]), 1))
+            X_test = np.reshape(LFP[:, v], (np.size(LFP[:, v]), 1))
+            y_train = np.reshape(SPK[:, idx], (np.size(SPK[:, idx]), 1))
+            y_test = np.reshape(SPK[:, v], (np.size(SPK[:, v]), 1))
+            
+#            print(X_train.shape)
+#            print(X_test.shape)
+#            print(y_train.shape)
+#            print(y_test.shape)            
+            
+            # reshape for LSTM
+            X_train = X_train.T[:, :, np.newaxis]
+            y_train = y_train.T[:, :, np.newaxis]
+            X_test = X_test.T[:, :, np.newaxis]
+            y_test = y_test.T[:, :, np.newaxis]
+            
+            # model fit 
+            model = create_model()
+            model.fit(X_train, y_train, epochs=50,
+                batch_size=10, validation_split=0.2, verbose=0) 
+#            model.save_weights(l[i] + fnames[c] + 'model_convi_' + 'cv' + str(v))
+            
+            # prediction and evaluation
+            y_pred = model.predict(X_test)
+            cc = np.corrcoef(y_test.ravel(), y_pred.ravel())
+            perf[v] = cc[0,1]
+        
+        # save model performance
+        pd.DataFrame(perf, columns=['pearson corr']). \
+            to_csv(l[i] + fnames[c] + '_dnn_perf.csv', sep=',', index=False)
+
+# run batch
+for i in range(len(l)):
+    fit_session(i)
+
+#def load_data(load_test=True):
+#    calcium_train = []
+#    spikes_train = []
+#    ids = []
+#    calcium_test = []
+#    ids_test = []
+#    for dataset in range(10):
+#        calcium_train.append(np.array(pd.read_csv(dataloc + 
+#            'spikefinder.train/' + str(dataset+1) + 
+#            '.train.calcium.csv')))
+#        spikes_train.append(np.array(pd.read_csv(dataloc + 
+#            'spikefinder.train/' + str(dataset+1) + 
+#            '.train.spikes.csv')))
+#        ids.append(np.array([dataset]*calcium_train[-1].shape[1]))
+#        if load_test and dataset < 5:
+#            calcium_test.append(np.array(pd.read_csv(dataloc +
+#                'spikefinder.test/' + str(dataset+1) +
+#                '.test.calcium.csv')))
+#            ids_test.append(np.array([dataset]*calcium_test[-1].shape[1]))
+#
+#    maxlen = max([c.shape[0] for c in calcium_train])
+#    maxlen_test = max([c.shape[0] for c in calcium_test])
+#    calcium_train_padded = \
+#        np.hstack([np.pad(c, ((0, maxlen-c.shape[0]), (0, 0)),
+#            'constant', constant_values=np.nan) for c in calcium_train])
+#    spikes_train_padded = \
+#        np.hstack([np.pad(c, ((0, maxlen-c.shape[0]), (0, 0)),
+#            'constant', constant_values=np.nan) for c in spikes_train])
+#    calcium_test_padded = \
+#        np.hstack([np.pad(c, ((0, maxlen_test-c.shape[0]), (0, 0)),
+#        'constant', constant_values=np.nan) for c in calcium_test])
+#    ids_stacked = np.hstack(ids)
+#    if load_test:
+#        ids_test_stacked = np.hstack(ids_test)
+#    else:
+#        ids_test_stacked = []
+#    sample_weight = 1. + 1.5*(ids_stacked<5)
+#    sample_weight /= sample_weight.mean()
+#    calcium_train_padded[spikes_train_padded<-1] = np.nan
+#    spikes_train_padded[spikes_train_padded<-1] = np.nan
+#
+#    calcium_train_padded[np.isnan(calcium_train_padded)] = 0.
+#    spikes_train_padded[np.isnan(spikes_train_padded)] = -1.
+#
+#    calcium_train_padded = calcium_train_padded.T[:, :, np.newaxis]
+#    spikes_train_padded = spikes_train_padded.T[:, :, np.newaxis]
+#    calcium_test_padded = calcium_test_padded.T[:, :, np.newaxis]
+#
+#    ids_oneshot = np.zeros((calcium_train_padded.shape[0],
+#        calcium_train_padded.shape[1], 10))
+#    ids_oneshot_test = np.zeros((calcium_test_padded.shape[0],
+#        calcium_test_padded.shape[1], 10))
+#    for n,i in enumerate(ids_stacked):
+#        ids_oneshot[n, :, i] = 1.
+#    for n,i in enumerate(ids_test_stacked):
+#        ids_oneshot_test[n, :, i] = 1.
+#
+#    return calcium_train, calcium_train_padded, spikes_train_padded,\
+#            calcium_test_padded, ids_oneshot, ids_oneshot_test,\
+#            ids_stacked, ids_test_stacked, sample_weight
+            
+
+#def create_model():
+#    '''
+#        Creates a multilayered convolutional network
+#        with a LSTM in between the layers.
+#
+#    '''
+#    main_input = Input(shape=(None,1), name='main_input')
+#    dataset_input = Input(shape=(None,10), name='dataset_input')
+#    x = Conv1D(10, 300, padding='same', input_shape=(None,1))(main_input)
+#    x = Activation('tanh')(x)
+#    x = Dropout(0.3)(x)
+#    x = Conv1D(10, 10, padding='same')(x)
+#    x = Activation('relu')(x)
+#    x = Dropout(0.2)(x)
+#    x = Concatenate()([x, dataset_input])
+#    x = Conv1D(10, 5, padding='same')(x)
+#    x = Activation('relu')(x)
+#    x = Dropout(0.1)(x)
+#
+#    z = Bidirectional(LSTM(10, return_sequences=True),
+#                merge_mode='concat', weights=None)(x)
+#    x = Concatenate()([x, z])
+#
+#    x = Conv1D(8, 5, padding='same')(x)
+#    x = Activation('relu')(x)
+#    x = Dropout(0.1)(x)
+#    x = Conv1D(4, 5, padding='same')(x)
+#    x = Activation('relu')(x)
+#    x = Conv1D(2, 5, padding='same')(x)
+#    x = Activation('relu')(x)
+#    x = Conv1D(2, 5, padding='same')(x)
+#    x = Activation('relu')(x)
+#    x = Conv1D(1, 5, padding='same')(x)
+#    output = Activation('sigmoid')(x)
+#
+#    model = Model(inputs=[main_input, dataset_input], outputs=output)
+#    model.compile(loss=pearson_corr, optimizer='adam')
+#
+#    return model
+
+
+#def model_fit(model):
+#    tbCallBack = TensorBoard(log_dir='./logtest2', histogram_freq=0,
+#            write_graph=True, write_images=True)
+#
+#    model.fit([calcium_train_padded, ids_oneshot], 
+#        spikes_train_padded, epochs=1,
+#        batch_size=5, validation_split=0.2, sample_weight=sample_weight,
+#        callbacks=[tbCallBack])
+#    model.save_weights('model_convi_6')
+#    return model
+#
+#
+#def model_test(model):
+#    #model.compile(loss=pearson_corr,optimizer='adam')
+#    #model.load_weights('model_convi_6')
+#    pred_train = model.predict([calcium_train_padded, ids_oneshot])
+#    pred_test = model.predict([calcium_test_padded, ids_oneshot_test])
+#
+#    for dataset in range(10):
+#        pd.DataFrame(pred_train[ids_stacked == dataset,
+#            :calcium_train[dataset].shape[0]].squeeze().T).\
+#            to_csv(dataloc + 'predict_6/' + str(dataset+1)+\
+#            '.train.spikes.csv', sep=',', index=False)
+#        if dataset < 5:
+#            pd.DataFrame(pred_test[ids_test_stacked == dataset,
+#                :calcium_test[dataset].shape[0]].squeeze().T).\
+#                to_csv(dataloc + 'predict_6/' + str(dataset+1)+\
+#                '.test.spikes.csv', sep=',', index=False)
+#
+#
+#def plot_kernels(model, layer=0):
+#    srate = 100.
+#    weights = model.get_weights()[layer]
+#    t = np.arange(-weights.shape[0]/srate/2,
+#                weights.shape[0]/srate/2, 1./srate)
+#    for j in range(weights.shape[2]):
+#        plt.plot(t, weights[:, 0, j] + .3*j)
+#
+#    plt.xlabel('Time [s]')
+#    plt.ylabel('Kernel amplitudes')
+#    plt.title('Convolutional kernels of the input layer')
+#    plt.show()
 
 
 
-if __name__ == '__main__':
-    calcium_train, calcium_train_padded, spikes_train_padded,\
-    calcium_test_padded, ids_oneshot, ids_oneshot_test,\
-    ids_stacked, ids_test_stacked, sample_weight = load_data()
-
-    model = create_model()
+#if __name__ == '__main__':
+#    calcium_train, calcium_train_padded, spikes_train_padded,\
+#    calcium_test_padded, ids_oneshot, ids_oneshot_test,\
+#    ids_stacked, ids_test_stacked, sample_weight = load_data()
+#
+#    model = create_model()
     #model = model_fit(model)
     #model_test(model)
 
