@@ -32,7 +32,7 @@ l = glob.glob(mypath + '/Katsuhisa/serotonin_project/LFP_project/Data/c2s/data/*
 
 # other variables ===================================
 fnames = ['base', 'drug', 'highFR', 'lowFR']
-cv = 10
+cv = 2
 
 # functions ==========================================
 def pearson_corr(y_true, y_pred, pool=True):
@@ -86,36 +86,32 @@ def create_model():
         with a LSTM in between the layers.
 
     '''
-    main_input = Input(shape=(None,1), name='main_input')
-#    dataset_input = Input(shape=(None,10), name='dataset_input')
-    x = Conv1D(10, 300, padding='same', input_shape=(None,1))(main_input)
-    x = Activation('tanh')(x)
-    x = Dropout(0.3)(x)
-    x = Conv1D(10, 10, padding='same')(x)
-    x = Activation('relu')(x)
-    x = Dropout(0.2)(x)
-#    x = Concatenate()([x, dataset_input])
-    x = Conv1D(10, 5, padding='same')(x)
-    x = Activation('relu')(x)
-    x = Dropout(0.1)(x)
-    z = Bidirectional(LSTM(10, return_sequences=True),
-                input_shape=(1, 1), weights=None)(x)
-    x = Concatenate()([x, z])
+    num_kernels = 10
+    kernel_size = 300
+    
+    model = Sequential()
+    model.add(Conv1D(num_kernels, kernel_size, padding='same', input_shape=(None, 1)))
+    model.add(Activation('tanh'))
+    model.add(Dropout(0.3))
+    model.add(Conv1D(num_kernels, 10, padding='same'))
+    model.add(Activation('relu'))
+    model.add(Dropout(0.2))
+    model.add(Conv1D(10, 5, padding='same'))
+    model.add(Activation('relu'))
+    model.add(Dropout(0.1))
+#    model.add(Bidirectional(LSTM(10, return_sequences=True)))
+    model.add(Conv1D(8, 5, padding='same'))
+    model.add(Activation('relu'))
+    model.add(Dropout(0.1))
+    model.add(Conv1D(4, 5, padding='same'))
+    model.add(Activation('relu'))
+    model.add(Conv1D(2, 5, padding='same'))
+    model.add(Activation('relu'))
+    model.add(Conv1D(2, 5, padding='same'))
+    model.add(Activation('relu'))
+    model.add(Conv1D(1, 5, padding='same'))
+    model.add(Activation('sigmoid'))
 
-    x = Conv1D(8, 5, padding='same')(x)
-    x = Activation('relu')(x)
-    x = Dropout(0.1)(x)
-    x = Conv1D(4, 5, padding='same')(x)
-    x = Activation('relu')(x)
-    x = Conv1D(2, 5, padding='same')(x)
-    x = Activation('relu')(x)
-    x = Conv1D(2, 5, padding='same')(x)
-    x = Activation('relu')(x)
-    x = Conv1D(1, 5, padding='same')(x)
-    output = Activation('sigmoid')(x)
-
-#    model = Model(inputs=[main_input, dataset_input], outputs=output)
-    model = Model(inputs=main_input, outputs=output)
     model.compile(loss=pearson_corr, optimizer='adam')
 
     return model
@@ -141,36 +137,47 @@ def fit_session(i):
         LFP = np.array(pd.read_csv(l[i] + 'lfp_' + fnames[c] + '_cv10.csv'))
         SPK = np.array(pd.read_csv(l[i] + 'spk_' + fnames[c] + '_cv10.csv'))
         
-        # remove nan
-        LFP[np.isnan(LFP)] = 0.
-        SPK[np.isnan(SPK)] = 0.
-#        SPK[SPK > 1] = 1
-        
         # cross-validation
         perf = np.zeros(cv)
         for v in range(cv):
             # split train and test
             idx = [l for l in range(cv) if l != v]
-            X_train = np.reshape(LFP[:, idx], (np.size(LFP[:, idx]), 1))
-            X_test = np.reshape(LFP[:, v], (np.size(LFP[:, v]), 1))
-            y_train = np.reshape(SPK[:, idx], (np.size(SPK[:, idx]), 1))
-            y_test = np.reshape(SPK[:, v], (np.size(SPK[:, v]), 1))
+            X_train = np.reshape(LFP[:, idx].T, (np.size(LFP[:, idx]), 1))
+            X_test = np.reshape(LFP[:, v].T, (np.size(LFP[:, v]), 1))
+            y_train = np.reshape(SPK[:, idx].T, (np.size(SPK[:, idx]), 1))
+            y_test = np.reshape(SPK[:, v].T, (np.size(SPK[:, v]), 1))
             
+            # remove nans
+            X_train = X_train[~np.isnan(X_train)]
+            y_train = y_train[~np.isnan(y_train)]
+            X_test = X_test[~np.isnan(X_test)]
+            y_test = y_test[~np.isnan(y_test)]
+            X_train = np.reshape(X_train, (np.size(X_train), 1, 1))
+            X_test = np.reshape(X_test, (np.size(X_test), 1, 1))
+            y_train = np.reshape(y_train, (np.size(y_train), 1, 1))
+            y_test = np.reshape(y_test, (np.size(y_test), 1, 1))
+            
+            print(X_train.shape)
+            print(X_test.shape)
+            print(y_train.shape)
+            print(y_test.shape) 
+            
+#            # reshape for LSTM
+#            X_train = X_train.T[:, :, np.newaxis]
+#            y_train = y_train.T[:, :, np.newaxis]
+#            X_test = X_test.T[:, :, np.newaxis]
+#            y_test = y_test.T[:, :, np.newaxis]
+#            
+#            # model fit 
 #            print(X_train.shape)
 #            print(X_test.shape)
 #            print(y_train.shape)
-#            print(y_test.shape)            
-            
-            # reshape for LSTM
-            X_train = X_train.T[:, :, np.newaxis]
-            y_train = y_train.T[:, :, np.newaxis]
-            X_test = X_test.T[:, :, np.newaxis]
-            y_test = y_test.T[:, :, np.newaxis]
-            
-            # model fit 
+#            print(y_test.shape) 
             model = create_model()
             model.fit(X_train, y_train, epochs=50,
                 batch_size=10, validation_split=0.2, verbose=0) 
+            if c==0 and v==0:
+                plot_kernels(model, layer=0)
 #            model.save_weights(l[i] + fnames[c] + 'model_convi_' + 'cv' + str(v))
             
             # prediction and evaluation
@@ -183,8 +190,9 @@ def fit_session(i):
             to_csv(l[i] + fnames[c] + '_dnn_perf.csv', sep=',', index=False)
 
 # run batch
-for i in range(len(l)):
-    fit_session(i)
+fit_session(0)
+#for i in range(len(l)):
+#    fit_session(i)
 
 #def load_data(load_test=True):
 #    calcium_train = []
