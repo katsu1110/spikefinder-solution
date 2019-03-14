@@ -16,7 +16,8 @@ from keras.layers.wrappers import Bidirectional
 from keras.layers.core import Masking
 from keras.layers.merge import Concatenate
 from keras.layers import Dense, Activation, Dropout, Input, LSTM
-from keras.layers.convolutional import Conv1D
+from keras.layers import Conv1D, GlobalAveragePooling1D, MaxPooling1D
+
 from keras.callbacks import TensorBoard
 
 from keras import backend as K
@@ -31,7 +32,8 @@ else:
 l = glob.glob(mypath + '/Katsuhisa/serotonin_project/LFP_project/Data/c2s/data/*/')
 
 # other variables ===================================
-fnames = ['base', 'drug', 'highFR', 'lowFR']
+#fnames = ['base', 'drug', 'highFR', 'lowFR']
+fnames = ['base']
 cv = 2
 
 # functions ==========================================
@@ -87,8 +89,18 @@ def create_model():
 
     '''
     num_kernels = 10
-    kernel_size = 300
-    
+    kernel_size = 100
+#    
+#    model = Sequential()
+#    model.add(Conv1D(num_kernels, kernel_size, activation='relu', input_shape=(None, 1)))
+#    model.add(Conv1D(num_kernels, kernel_size, activation='relu'))
+#    model.add(MaxPooling1D(3))
+#    model.add(Conv1D(num_kernels*2, kernel_size, activation='relu'))
+#    model.add(Conv1D(num_kernels*2, kernel_size, activation='sigmoid'))
+#    model.add(GlobalAveragePooling1D())
+#    model.add(Dropout(0.5))
+#    model.add(Dense(num_classes, activation='softmax'))
+#
     model = Sequential()
     model.add(Conv1D(num_kernels, kernel_size, padding='same', input_shape=(None, 1)))
     model.add(Activation('tanh'))
@@ -99,7 +111,7 @@ def create_model():
     model.add(Conv1D(10, 5, padding='same'))
     model.add(Activation('relu'))
     model.add(Dropout(0.1))
-#    model.add(Bidirectional(LSTM(10, return_sequences=True)))
+    model.add(Bidirectional(LSTM(10, return_sequences=True)))
     model.add(Conv1D(8, 5, padding='same'))
     model.add(Activation('relu'))
     model.add(Dropout(0.1))
@@ -113,7 +125,8 @@ def create_model():
     model.add(Activation('sigmoid'))
 
     model.compile(loss=pearson_corr, optimizer='adam')
-
+#    model.compile(loss='binary_crossentropy', optimizer='adam')
+    
     return model
 
 def plot_kernels(model, layer=0):
@@ -132,7 +145,7 @@ def plot_kernels(model, layer=0):
 def fit_session(i):
     # go thorugh conditions
     print('working on ' + l[i] + '...')
-    for c in range(4):
+    for c in range(len(fnames)):
         # load csv
         LFP = np.array(pd.read_csv(l[i] + 'lfp_' + fnames[c] + '_cv10.csv'))
         SPK = np.array(pd.read_csv(l[i] + 'spk_' + fnames[c] + '_cv10.csv'))
@@ -142,32 +155,28 @@ def fit_session(i):
         for v in range(cv):
             # split train and test
             idx = [l for l in range(cv) if l != v]
-            X_train = np.reshape(LFP[:, idx].T, (np.size(LFP[:, idx]), 1))
-            X_test = np.reshape(LFP[:, v].T, (np.size(LFP[:, v]), 1))
-            y_train = np.reshape(SPK[:, idx].T, (np.size(SPK[:, idx]), 1))
-            y_test = np.reshape(SPK[:, v].T, (np.size(SPK[:, v]), 1))
+            X_train = LFP[:, idx].T.ravel()
+            X_test = LFP[:, v].T.ravel()
+            y_train = SPK[:, idx].T.ravel()
+            y_test = SPK[:, v].T.ravel()
+            
+#            # to binary classification
+#            y_train[y_train > 1] = 1
+#            y_test[y_test > 1] = 1
             
             # remove nans
             X_train = X_train[~np.isnan(X_train)]
             y_train = y_train[~np.isnan(y_train)]
             X_test = X_test[~np.isnan(X_test)]
             y_test = y_test[~np.isnan(y_test)]
-            X_train = np.reshape(X_train, (np.size(X_train), 1, 1))
-            X_test = np.reshape(X_test, (np.size(X_test), 1, 1))
-            y_train = np.reshape(y_train, (np.size(y_train), 1, 1))
-            y_test = np.reshape(y_test, (np.size(y_test), 1, 1))
+            X_train = np.reshape(X_train, (1, np.size(X_train), 1))
+            X_test = np.reshape(X_test, (1, np.size(X_test), 1))
+            y_train = np.reshape(y_train, (1, np.size(y_train), 1))
             
             print(X_train.shape)
-            print(X_test.shape)
             print(y_train.shape)
-            print(y_test.shape) 
+            print([np.amin(y_test), np.amax(y_test)])
             
-#            # reshape for LSTM
-#            X_train = X_train.T[:, :, np.newaxis]
-#            y_train = y_train.T[:, :, np.newaxis]
-#            X_test = X_test.T[:, :, np.newaxis]
-#            y_test = y_test.T[:, :, np.newaxis]
-#            
 #            # model fit 
 #            print(X_train.shape)
 #            print(X_test.shape)
@@ -175,14 +184,16 @@ def fit_session(i):
 #            print(y_test.shape) 
             model = create_model()
             model.fit(X_train, y_train, epochs=50,
-                batch_size=10, validation_split=0.2, verbose=0) 
+                batch_size=32, validation_split=0.2, verbose=0) 
             if c==0 and v==0:
                 plot_kernels(model, layer=0)
 #            model.save_weights(l[i] + fnames[c] + 'model_convi_' + 'cv' + str(v))
             
             # prediction and evaluation
-            y_pred = model.predict(X_test)
-            cc = np.corrcoef(y_test.ravel(), y_pred.ravel())
+            y_pred = model.predict(X_test).ravel()
+            print(y_test[0:20])
+            print(y_pred[0:20])
+            cc = np.corrcoef(y_test, y_pred)
             perf[v] = cc[0,1]
         
         # save model performance
@@ -190,9 +201,9 @@ def fit_session(i):
             to_csv(l[i] + fnames[c] + '_dnn_perf.csv', sep=',', index=False)
 
 # run batch
-fit_session(0)
-#for i in range(len(l)):
-#    fit_session(i)
+#fit_session(0)
+for i in range(len(l)):
+    fit_session(i)
 
 #def load_data(load_test=True):
 #    calcium_train = []
